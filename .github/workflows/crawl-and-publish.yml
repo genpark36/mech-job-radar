@@ -1,0 +1,104 @@
+name: Crawl and publish
+
+on:
+  workflow_dispatch:
+  schedule:
+    # UTC 21/03/09/15 = KST 06/12/18/24
+    - cron: "0 3,9,15,21 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Write runtime env
+        shell: bash
+        env:
+          ALIO_API_URL: ${{ secrets.ALIO_API_URL }}
+          ALIO_API_KEY: ${{ secrets.ALIO_API_KEY }}
+          ALIO_API_KEY_PARAM: ${{ secrets.ALIO_API_KEY_PARAM }}
+          ALIO_PUBLIC_URL: ${{ secrets.ALIO_PUBLIC_URL }}
+          ALIO_PUBLIC_DEFAULT_PARAMS: ${{ secrets.ALIO_PUBLIC_DEFAULT_PARAMS }}
+          WORKNET_API_URL: ${{ secrets.WORKNET_API_URL }}
+          WORKNET_API_KEY: ${{ secrets.WORKNET_API_KEY }}
+          WORKNET_ENABLED: ${{ secrets.WORKNET_ENABLED }}
+          WORKNET_KEYWORDS: ${{ secrets.WORKNET_KEYWORDS }}
+          WORKNET_OCCUPATIONS: ${{ secrets.WORKNET_OCCUPATIONS }}
+        run: |
+          : > .env
+          add_env() {
+            if [ -n "$2" ]; then
+              printf '%s=%s\n' "$1" "$2" >> .env
+            fi
+          }
+          add_env ALIO_API_URL "$ALIO_API_URL"
+          add_env ALIO_API_KEY "$ALIO_API_KEY"
+          add_env ALIO_API_KEY_PARAM "$ALIO_API_KEY_PARAM"
+          add_env ALIO_PUBLIC_URL "$ALIO_PUBLIC_URL"
+          add_env ALIO_PUBLIC_DEFAULT_PARAMS "$ALIO_PUBLIC_DEFAULT_PARAMS"
+          add_env WORKNET_API_URL "$WORKNET_API_URL"
+          add_env WORKNET_API_KEY "$WORKNET_API_KEY"
+          add_env WORKNET_ENABLED "$WORKNET_ENABLED"
+          add_env WORKNET_KEYWORDS "$WORKNET_KEYWORDS"
+          add_env WORKNET_OCCUPATIONS "$WORKNET_OCCUPATIONS"
+          add_env MECH_JOB_RADAR_DB "data/job_radar.sqlite3"
+
+      - name: Restore crawl database
+        uses: actions/cache/restore@v4
+        with:
+          path: data/job_radar.sqlite3
+          key: job-radar-db-${{ github.run_id }}
+          restore-keys: |
+            job-radar-db-
+
+      - name: Check Python files
+        run: python -m compileall src
+
+      - name: Crawl sources
+        env:
+          PYTHONPATH: src
+        run: |
+          mkdir -p data
+          python -m job_radar init-db
+          python -m job_radar fetch-all --platform-max-items 1000 --platform-max-pages 5 --worknet-max-pages 20 || true
+
+      - name: Save crawl database
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/job_radar.sqlite3
+          key: job-radar-db-${{ github.run_id }}
+
+      - name: Build static dashboard
+        env:
+          PYTHONPATH: src
+        run: |
+          mkdir -p site
+          python -m job_radar write-dashboard --output site/index.html --limit 0
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

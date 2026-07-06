@@ -1,0 +1,58 @@
+{
+  "response": {
+    "header": {
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE"
+    },
+    "body": {
+      "items": {
+        "item": [
+          {
+            "공시기관": "한국수력원자력(주)",
+            "채용제목": "2026년도 기계직 신입사원 채용 공고",
+            "시작일": "2026-06-23",
+            "종료일": "2026-07-10",
+            "채용분야": "기계",
+            "고용형태": "정규직",
+            "채용구분": "신입",
+            "근무지": "경북",
+            "상세URL": "https://example.invalid/alio/khnp-mechanical-2026"
+          },
+          {
+            "공시기관": "한국철도공사",
+            "채용제목": "철도차량 정비 분야 체험형 인턴 모집",
+            "시작일": "2026-06-22",
+            "종료일": "2026-07-03",
+            "채용분야": "기계",
+            "고용형태": "청년인턴(체험형)",
+            "채용구분": "신입",
+            "근무지": "대전",
+            "상세URL": "https://example.invalid/alio/korail-vehicle-intern-2026"
+          },
+          {
+            "공시기관": "한국문화정보원",
+            "채용제목": "전산 운영 담당자 채용",
+            "시작일": "2026-06-21",
+            "종료일": "2026-07-01",
+            "채용분야": "정보통신",
+            "고용형태": "정규직",
+            "채용구분": "경력",
+            "근무지": "서울",
+            "상세URL": "https://example.invalid/alio/it-operator-2026"
+          },
+          {
+            "instNm": "한국가스공사",
+            "recrutPbancTtl": "기계설비 유지보수 신입 채용",
+            "pbancBgngYmd": "2026-06-24",
+            "pbancEndYmd": "2026-07-12",
+            "ncsCdNmLst": "R600015",
+            "hireTypeNm": "R1010",
+            "recrutTypeNm": "R2010",
+            "workRgnNmLst": "R3019,R3020",
+            "srcUrl": "https://example.invalid/alio/kogas-mechanical-maintenance-2026"
+          }
+        ]
+      }
+    }
+  }
+}

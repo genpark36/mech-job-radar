@@ -1,0 +1,225 @@
+{
+  "targets": [
+    {
+      "name": "현대자동차",
+      "group": "현대자동차그룹",
+      "sector": "자동차",
+      "enabled": false,
+      "keywords": [
+        "자동차",
+        "생산",
+        "제조",
+        "공정",
+        "설비",
+        "품질",
+        "기술직"
+      ],
+      "urls": [
+        "https://talent.hyundai.com/apply/applyList.hc"
+      ]
+    },
+    {
+      "name": "기아",
+      "group": "현대자동차그룹",
+      "sector": "자동차",
+      "enabled": false,
+      "keywords": [
+        "자동차",
+        "생산",
+        "제조",
+        "공정",
+        "설비",
+        "품질"
+      ],
+      "urls": [
+        "https://career.kia.com/apply/applyList.kc"
+      ]
+    },
+    {
+      "name": "현대모비스",
+      "group": "현대자동차그룹",
+      "sector": "자동차부품",
+      "keywords": [
+        "자동차",
+        "모빌리티",
+        "생산기술",
+        "설비",
+        "품질",
+        "전동화"
+      ],
+      "urls": [
+        "https://careers.mobis.com/"
+      ]
+    },
+    {
+      "name": "현대로템",
+      "group": "현대자동차그룹",
+      "sector": "철도차량/방산",
+      "enabled": false,
+      "keywords": [
+        "철도차량",
+        "방산",
+        "기계",
+        "생산",
+        "품질",
+        "정비"
+      ],
+      "urls": [
+        "https://hyundai-rotem.recruiter.co.kr/career/home"
+      ]
+    },
+    {
+      "name": "한화그룹",
+      "group": "한화",
+      "sector": "방산/제조",
+      "enabled": false,
+      "keywords": [
+        "방산",
+        "항공",
+        "기계",
+        "생산기술",
+        "품질",
+        "공정"
+      ],
+      "urls": [
+        "https://www.hanwhain.com/"
+      ]
+    },
+    {
+      "name": "LIG넥스원",
+      "group": "LIG",
+      "sector": "방산",
+      "parser": "recruiter_mrs2",
+      "keywords": [
+        "방산",
+        "기계",
+        "품질",
+        "생산",
+        "제조",
+        "화약"
+      ],
+      "urls": [
+        "https://ligdna.recruiter.co.kr/app/jobnotice/list"
+      ]
+    },
+    {
+      "name": "삼성그룹",
+      "group": "삼성",
+      "sector": "전자/반도체/중공업",
+      "enabled": false,
+      "keywords": [
+        "반도체",
+        "장비",
+        "설비",
+        "공정",
+        "품질",
+        "생산"
+      ],
+      "urls": [
+        "https://www.samsungcareers.com/"
+      ]
+    },
+    {
+      "name": "SK그룹",
+      "group": "SK",
+      "sector": "반도체/에너지",
+      "enabled": false,
+      "keywords": [
+        "반도체",
+        "장비",
+        "설비",
+        "공정",
+        "품질",
+        "생산"
+      ],
+      "urls": [
+        "https://www.skcareers.com/"
+      ]
+    },
+    {
+      "name": "SK하이닉스",
+      "group": "SK",
+      "sector": "반도체",
+      "enabled": false,
+      "keywords": [
+        "반도체",
+        "장비",
+        "설비",
+        "공정",
+        "품질",
+        "maintenance"
+      ],
+      "urls": [
+        "https://talent.skhynix.com/hub/ko/apply/job"
+      ]
+    },
+    {
+      "name": "HD현대",
+      "group": "HD현대",
+      "sector": "조선/건설기계/전기",
+      "enabled": false,
+      "keywords": [
+        "조선",
+        "건설기계",
+        "전기",
+        "생산기술",
+        "설계",
+        "품질"
+      ],
+      "urls": [
+        "https://recruit.hd.com/kr/mainLayout/apply"
+      ]
+    },
+    {
+      "name": "두산그룹",
+      "group": "두산",
+      "sector": "기계/에너지/로보틱스",
+      "enabled": false,
+      "keywords": [
+        "기계",
+        "에너지",
+        "로보틱스",
+        "생산",
+        "품질",
+        "정비"
+      ],
+      "urls": [
+        "https://career.doosan.com/"
+      ]
+    },
+    {
+      "name": "LS ELECTRIC",
+      "group": "LS",
+      "sector": "전력기기/자동화",
+      "enabled": false,
+      "keywords": [
+        "전력",
+        "자동화",
+        "설비",
+        "생산",
+        "품질",
+        "기계"
+      ],
+      "urls": [
+        "https://lselectric.recruiter.co.kr/career/home"
+      ]
+    },
+    {
+      "name": "ABB코리아",
+      "group": "",
+      "sector": "산업자동화·전력·제어",
+      "keywords": [
+        "기계",
+        "생산기술",
+        "품질",
+        "장비",
+        "자동화"
+      ],
+      "urls": [
+        "https://careers.abb/global/en/search-results"
+      ],
+      "enabled": false,
+      "parser": "generic"
+    }
+  ]
+}
