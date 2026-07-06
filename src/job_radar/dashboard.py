@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import html
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .db import dedupe_group_key
+
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 def render_dashboard(
@@ -18,552 +23,590 @@ def render_dashboard(
     auto_refresh: bool = False,
 ) -> str:
     job_dicts = merge_duplicate_jobs([dict(row) for row in jobs])
+    payload_jobs = [serialize_job(row) for row in job_dicts]
+    job_payload = json.dumps(payload_jobs, ensure_ascii=False)
     log_rows = "\n".join(render_log_row(dict(row)) for row in logs)
     source_rows = "\n".join(render_source_row(dict(row)) for row in (source_health or []))
-    last_log = summary.get("last_log") or {}
-    job_payload = json.dumps(
-        [serialize_job(row) for row in job_dicts],
-        ensure_ascii=False,
-    )
-    fit_levels = sorted({classify_mechanical_fit(row)["level"] for row in job_dicts})
-    sources = sorted({source_label(row.get("source_platform")) for row in job_dicts if row.get("source_platform")})
-    sectors = sorted({classify_sector(row) for row in job_dicts})
-    watch_grades = sorted(
+    sources = sorted(
         {
-            watch_info(row).get("watchGrade")
-            for row in job_dicts
-            if watch_info(row).get("watchGrade")
+            label
+            for job in payload_jobs
+            for label in str(job.get("source_label", "")).split("·")
+            if label
         }
     )
-    recommended_count = sum(
-        1 for row in job_dicts if classify_mechanical_fit(row)["level"] in ("기계 추천", "검토 필요")
+    source_options = "\n".join(
+        f'<option value="{escape(source)}">{escape(source)}</option>' for source in sources
     )
-    source_options = "\n".join(f'<option value="{escape(source)}">{escape(source)}</option>' for source in sources)
-    sector_options = "\n".join(f'<option value="{escape(sector)}">{escape(sector)}</option>' for sector in sectors)
-    fit_options = "\n".join(f'<option value="{escape(level)}">{escape(level)}</option>' for level in fit_levels)
-    watch_options = "\n".join(
-        f'<option value="{escape(grade)}">관심기업 {escape(grade)}</option>'
-        for grade in watch_grades
+    last_log = summary.get("last_log") or {}
+    last_status_html = status_badge(str(last_log.get("status", "없음") or "없음"))
+    crawl_button = (
+        '<button type="button" class="ghost" onclick="runCrawl(this)">지금 수집</button>'
+        if auto_refresh
+        else ""
     )
-    last_status = str(last_log.get("status", "없음") or "없음")
-    last_status_html = status_badge(last_status)
+    generated_at = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
+    next_run_html = (
+        f'<span class="meta-item">다음 자동 수집 {escape(next_run_kst)}</span>' if next_run_kst else ""
+    )
 
-    return f"""<!doctype html>
+    return (
+        DASHBOARD_TEMPLATE.replace("__JOB_PAYLOAD__", job_payload)
+        .replace("__SOURCE_OPTIONS__", source_options)
+        .replace("__SOURCE_ROWS__", source_rows)
+        .replace("__LOG_ROWS__", log_rows)
+        .replace("__LAST_STATUS__", last_status_html)
+        .replace("__CRAWL_BUTTON__", crawl_button)
+        .replace("__GENERATED_AT__", escape(generated_at))
+        .replace("__NEXT_RUN__", next_run_html)
+    )
+
+
+DASHBOARD_TEMPLATE = """<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>채용 공고</title>
+  <title>기계직 채용 레이더</title>
   <style>
-    body {{
+    :root {
+      --ink: #1a2233;
+      --muted: #66738c;
+      --line: #e3e9f2;
+      --bg: #f4f6fa;
+      --card: #ffffff;
+      --accent: #0f2d52;
+      --link: #0b63ce;
+      --ok: #087a4a;
+      --warn: #a15c00;
+      --danger: #c21f32;
+    }
+    * { box-sizing: border-box; }
+    body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f6f8fb;
-      color: #172033;
-    }}
-    header {{
-      background: #0f2d52;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      font-size: 14px;
+    }
+    header {
+      background: var(--accent);
       color: white;
-      padding: 24px 32px;
-    }}
-    main {{
-      max-width: 1440px;
-      margin: 0 auto;
-      padding: 24px;
-    }}
-    .stats, .filters {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-      gap: 12px;
-      margin-bottom: 16px;
-    }}
-    .filters {{
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    }}
-    .stat, section {{
-      background: white;
-      border: 1px solid #dce3ee;
-      border-radius: 8px;
-      padding: 16px;
-    }}
-    .stat strong {{
-      display: block;
-      font-size: 28px;
-      margin-top: 4px;
-    }}
-    .stat .status-pill {{
-      margin-top: 10px;
-    }}
-    h1, h2 {{
-      margin: 0;
-    }}
-    h2 {{
-      margin-bottom: 12px;
-      font-size: 18px;
-    }}
-    input, select, button {{
-      width: 100%;
-      min-height: 38px;
-      box-sizing: border-box;
-      border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      background: white;
-      color: #172033;
-      font: inherit;
-      padding: 8px 10px;
-    }}
-    button {{
-      cursor: pointer;
-      background: #0f2d52;
-      color: white;
-      border-color: #0f2d52;
-      font-weight: 700;
-    }}
-    .table-wrap {{
-      overflow-x: auto;
-    }}
-    table {{
-      width: 100%;
-      border-collapse: collapse;
+      padding: 18px 20px;
+    }
+    header h1 { margin: 0; font-size: 19px; }
+    header .meta { margin-top: 6px; font-size: 12px; opacity: 0.85; display: flex; gap: 14px; flex-wrap: wrap; }
+    main { max-width: 980px; margin: 0 auto; padding: 16px; }
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .stat {
+      flex: 1 1 120px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 14px;
+    }
+    .stat .label { font-size: 12px; color: var(--muted); }
+    .stat strong { display: block; font-size: 22px; margin-top: 2px; }
+    .stat.danger strong { color: var(--danger); }
+    .stat.ok strong { color: var(--ok); }
+
+    .tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+    .tab {
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 7px 16px;
       font-size: 13px;
-      min-width: 1180px;
-    }}
-    th, td {{
-      border-bottom: 1px solid #e7edf5;
-      padding: 10px 8px;
-      text-align: left;
-      vertical-align: top;
-    }}
-    th {{
-      color: #53627a;
-      font-weight: 600;
-      white-space: nowrap;
-    }}
-    a {{
-      color: #0b63ce;
-    }}
-    .links {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }}
-    .button-link {{
-      display: inline-block;
-      padding: 5px 8px;
-      border: 1px solid #b8c7db;
-      border-radius: 6px;
-      background: #f8fbff;
-      color: #0b4f9c;
-      font-size: 12px;
-      font-weight: 600;
-      text-decoration: none;
-      white-space: nowrap;
-    }}
-    .button-link.secondary {{
-      background: white;
-      color: #53627a;
-    }}
-    .muted {{
-      color: #6c7890;
-    }}
-    .status-pill {{
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .tab.active { background: var(--accent); border-color: var(--accent); color: white; }
+    .tab .count { font-weight: 400; opacity: 0.8; margin-left: 4px; }
+
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    .controls input[type="search"] {
+      flex: 2 1 220px;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font: inherit;
+      background: var(--card);
+    }
+    .controls select {
+      flex: 1 1 130px;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: inherit;
+      background: var(--card);
+    }
+    .controls label.toggle {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      min-height: 26px;
+      padding: 0 10px;
+      font-size: 13px;
+      color: var(--muted);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-height: 38px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button.ghost {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+      color: var(--accent);
+      font: inherit;
+      font-weight: 700;
+      padding: 0 14px;
+      cursor: pointer;
+    }
+
+    .company-group {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    .company-group > summary {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      cursor: pointer;
+      flex-wrap: wrap;
+    }
+    .company-group > summary::-webkit-details-marker { display: none; }
+    .company-group > summary::before {
+      content: "▸";
+      color: var(--muted);
+      font-size: 12px;
+      transition: transform 0.15s;
+    }
+    .company-group[open] > summary::before { transform: rotate(90deg); }
+    .company-name { font-weight: 800; font-size: 14px; }
+    .job-count { color: var(--muted); font-size: 12px; }
+    .postings { border-top: 1px solid var(--line); }
+
+    .posting {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
+    }
+    .posting:last-child { border-bottom: none; }
+    .posting .title { flex: 1 1 300px; font-weight: 600; }
+    .posting .sub { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .single .posting { border-bottom: none; }
+    .single > summary { display: none; }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .chip.new { background: #e7f7ef; color: var(--ok); }
+    .chip.dday { background: #fde8e8; color: var(--danger); }
+    .chip.dday-soon { background: #fff3d7; color: var(--warn); }
+    .chip.ongoing { background: #edf2f7; color: var(--muted); font-weight: 600; }
+    .chip.watch { background: #eef2ff; color: #3730a3; }
+    .chip.source { background: #edf4ff; color: #174b8f; font-weight: 600; }
+    .chip.career { background: #f4f0ff; color: #5b3fa8; font-weight: 600; }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 40px 0;
+    }
+    .more-bar {
+      width: 100%;
+      margin: 4px 0 16px;
+      min-height: 40px;
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      cursor: pointer;
+    }
+
+    details.aux {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      margin-top: 14px;
+      padding: 0;
+    }
+    details.aux > summary {
+      padding: 12px 14px;
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    details.aux .table-wrap { overflow-x: auto; padding: 0 14px 14px; }
+    details.aux table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 720px; }
+    details.aux th, details.aux td { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: left; vertical-align: top; }
+    details.aux th { color: var(--muted); white-space: nowrap; }
+    .url-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       padding: 3px 9px;
       border-radius: 999px;
       font-size: 12px;
       font-weight: 800;
       white-space: nowrap;
-    }}
-    .status-pill::before {{
-      content: "";
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: currentColor;
-    }}
-    .status-ok {{
-      background: #e7f7ef;
-      color: #087a4a;
-    }}
-    .status-warn {{
-      background: #fff3d7;
-      color: #a15c00;
-    }}
-    .status-error {{
-      background: #fde8e8;
-      color: #c21f32;
-    }}
-    .status-idle {{
-      background: #edf2f7;
-      color: #53627a;
-    }}
-    .sector {{
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 7px;
-      border-radius: 999px;
-      background: #edf4ff;
-      color: #174b8f;
-      font-size: 12px;
-      font-weight: 700;
-      white-space: nowrap;
-    }}
-    .watch {{
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 7px;
-      border-radius: 999px;
-      background: #eef2ff;
-      color: #3730a3;
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }}
-    .fit {{
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 7px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }}
-    .fit-strong {{
-      background: #e7f7ef;
-      color: #087a4a;
-    }}
-    .fit-review {{
-      background: #fff3d7;
-      color: #9a5b00;
-    }}
-    .fit-low {{
-      background: #edf2f7;
-      color: #53627a;
-    }}
-    .fit-reject {{
-      background: #fde8e8;
-      color: #b42335;
-    }}
-    .score {{
-      font-weight: 700;
-      color: #0f6b4f;
-    }}
-    .toolbar {{
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      justify-content: space-between;
-      margin: 0 0 12px;
-      flex-wrap: wrap;
-    }}
-    .toolbar p {{
-      margin: 0;
-    }}
-    .check-group {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-      min-height: 38px;
-      padding: 8px 10px;
-      border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      background: white;
-    }}
-    .check-group label {{
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      font-size: 13px;
-      white-space: nowrap;
-    }}
-    .check-group input {{
-      width: auto;
-      min-height: auto;
-      padding: 0;
-    }}
-    .url-cell {{
-      max-width: 520px;
-      overflow-wrap: anywhere;
-    }}
+    }
+    .status-pill::before { content: ""; width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
+    .status-ok { background: #e7f7ef; color: var(--ok); }
+    .status-warn { background: #fff3d7; color: var(--warn); }
+    .status-error { background: #fde8e8; color: var(--danger); }
+    .status-idle { background: #edf2f7; color: var(--muted); }
   </style>
 </head>
 <body>
   <header>
-    <h1>채용 공고</h1>
-    <p>기계/생산기술/설비/공정/품질 공고 전체 모니터</p>
+    <h1>기계직 채용 레이더</h1>
+    <div class="meta">
+      <span class="meta-item">생성 __GENERATED_AT__</span>
+      __NEXT_RUN__
+      <span class="meta-item">최근 수집 __LAST_STATUS__</span>
+    </div>
   </header>
   <main>
     <div class="stats">
-      <div class="stat">전체 감지 공고<strong>{summary["job_count"]}</strong></div>
-      <div class="stat">현재 표시<strong id="visibleCount">{len(job_dicts)}</strong></div>
-      <div class="stat">기계 후보<strong>{recommended_count}</strong></div>
-      <div class="stat">크롤링 로그<strong>{summary["log_count"]}</strong></div>
-      <div class="stat">최근 상태<br>{last_status_html}</div>
-      <div class="stat">다음 자동 갱신<strong>{escape(next_run_kst or "서버 실행 시 표시")}</strong></div>
+      <div class="stat ok"><span class="label">기계직 공고</span><strong id="statMech">0</strong></div>
+      <div class="stat"><span class="label">오늘 신규</span><strong id="statNew">0</strong></div>
+      <div class="stat danger"><span class="label">7일 내 마감</span><strong id="statClosing">0</strong></div>
+      <div class="stat"><span class="label">전체 저장</span><strong id="statTotal">0</strong></div>
     </div>
-    <section>
-      <div class="toolbar">
-        <h2>전체 공고</h2>
-        <p class="muted">브라우저에서 즉시 필터링합니다. 기본은 전체 표시입니다.</p>
-      </div>
-      <div class="filters">
-        <input id="q" placeholder="기업/제목/지역/키워드 검색">
-        <select id="searchMode">
-          <option value="and">검색어 AND</option>
-          <option value="or">검색어 OR</option>
-        </select>
-        <select id="source">
-          <option value="">전체 출처</option>
-          {source_options}
-        </select>
-        <select id="sector">
-          <option value="">전체 구분</option>
-          {sector_options}
-        </select>
-        <select id="fit">
-          <option value="">전체 적합도</option>
-          {fit_options}
-        </select>
-        <select id="watchGrade">
-          <option value="">전체 관심기업</option>
-          {watch_options}
-        </select>
-        <div class="check-group" aria-label="경력 필터">
-          <label><input type="checkbox" name="career" value="신입">신입</label>
-          <label><input type="checkbox" name="career" value="경력">경력</label>
-          <label><input type="checkbox" name="career" value="인턴">인턴</label>
-          <label><input type="checkbox" name="career" value="경력무관">무관</label>
-        </div>
-        <select id="careerMode">
-          <option value="or">경력 OR</option>
-          <option value="and">경력 AND</option>
-        </select>
-        <select id="minScore">
-          <option value="-999">전체 점수</option>
-          <option value="0">0점 이상</option>
-          <option value="1">1점 이상</option>
-          <option value="5">5점 이상</option>
-          <option value="8">8점 이상</option>
-          <option value="12">12점 이상</option>
-        </select>
-        <select id="sortField">
-          <option value="detected_at">감지일</option>
-          <option value="deadline">마감일</option>
-          <option value="score">점수</option>
-          <option value="company_name">기관</option>
-          <option value="title">제목</option>
-          <option value="source_label">출처</option>
-          <option value="career_type">경력</option>
-        </select>
-        <select id="sortDir">
-          <option value="desc">내림차순</option>
-          <option value="asc">오름차순</option>
-        </select>
-        <button type="button" onclick="resetFilters()">초기화</button>
-        {"<button type=\"button\" onclick=\"runCrawl()\">수동 갱신</button>" if auto_refresh else ""}
-      </div>
+
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="mech">기계직<span class="count" id="cntMech"></span></button>
+      <button class="tab" data-tab="review">참고<span class="count" id="cntReview"></span></button>
+      <button class="tab" data-tab="watch">관심기업<span class="count" id="cntWatch"></span></button>
+      <button class="tab" data-tab="all">전체<span class="count" id="cntAll"></span></button>
+    </div>
+
+    <div class="controls">
+      <input type="search" id="q" placeholder="회사·제목·분야 검색">
+      <select id="source">
+        <option value="">모든 출처</option>
+        __SOURCE_OPTIONS__
+      </select>
+      <select id="sort">
+        <option value="new">신규 수집순</option>
+        <option value="deadline">마감 임박순</option>
+      </select>
+      <label class="toggle"><input type="checkbox" id="hideExpired" checked>마감 지난 공고 숨기기</label>
+      __CRAWL_BUTTON__
+    </div>
+
+    <div id="groups"></div>
+    <button class="more-bar" id="moreBar" hidden onclick="showMore()">더 보기</button>
+
+    <details class="aux">
+      <summary>수집 소스 상태</summary>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr>
-              <th>점수</th>
-              <th>출처</th>
-              <th>적합도</th>
-              <th>구분</th>
-              <th>관심기업</th>
-              <th>기관</th>
-              <th>제목</th>
-              <th>마감</th>
-              <th>경력</th>
-              <th>고용</th>
-              <th>지역</th>
-              <th>분야</th>
-              <th>근거</th>
-              <th>링크</th>
-            </tr>
+            <tr><th>출처</th><th>상태</th><th>최근 수집</th><th>신규</th><th>누적 오류</th><th>소요</th><th>URL</th><th>메시지</th></tr>
           </thead>
-          <tbody id="jobsBody"></tbody>
+          <tbody>
+__SOURCE_ROWS__
+          </tbody>
         </table>
       </div>
-    </section>
-    <section style="margin-top: 20px;">
-      <div class="toolbar">
-        <h2>수집 소스 상태</h2>
-        <p class="muted">실패하거나 한동안 신규가 없는 소스를 확인합니다.</p>
-      </div>
+    </details>
+
+    <details class="aux">
+      <summary>최근 수집 로그</summary>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr>
-              <th>출처</th>
-              <th>상태</th>
-              <th>최근 실행</th>
-              <th>신규</th>
-              <th>오류횟수</th>
-              <th>소요</th>
-              <th>URL</th>
-              <th>오류</th>
-            </tr>
+            <tr><th>시각</th><th>상태</th><th>신규</th><th>소요(ms)</th><th>메시지</th></tr>
           </thead>
-          <tbody>{source_rows or '<tr><td colspan="8" class="muted">아직 등록된 수집 소스가 없습니다.</td></tr>'}</tbody>
+          <tbody>
+__LOG_ROWS__
+          </tbody>
         </table>
       </div>
-    </section>
-    <section style="margin-top: 20px;">
-      <h2>최근 로그</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>시간</th>
-              <th>상태</th>
-              <th>신규</th>
-              <th>소요</th>
-              <th>오류</th>
-            </tr>
-          </thead>
-          <tbody>{log_rows or '<tr><td colspan="5" class="muted">아직 로그가 없습니다.</td></tr>'}</tbody>
-        </table>
-      </div>
-    </section>
+    </details>
   </main>
+
   <script>
-    const JOBS = {job_payload};
-    const body = document.getElementById("jobsBody");
-    const controls = [
-      "q", "searchMode", "source", "sector", "watchGrade", "careerMode",
-      "fit", "minScore", "sortField", "sortDir"
-    ].map((id) => document.getElementById(id));
-    const careerChecks = [...document.querySelectorAll('input[name="career"]')];
+    const JOBS = __JOB_PAYLOAD__;
+    const GROUP_PAGE = 40;
+    const state = { tab: "mech", q: "", source: "", sort: "new", hideExpired: true, visibleGroups: GROUP_PAGE };
 
-    function escapeHtml(value) {{
-      return String(value ?? "").replace(/[&<>"']/g, (char) => ({{
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;"
-      }}[char]));
-    }}
+    const NOW = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
 
-    function linkHtml(job) {{
-      const links = [];
-      if (job.alio_detail_url) {{
-        links.push(`<a class="button-link" href="${{escapeHtml(job.alio_detail_url)}}" target="_blank" rel="noreferrer">ALIO 상세</a>`);
-      }}
-      if (job.external_url && job.external_url !== job.alio_detail_url) {{
-        links.push(`<a class="button-link secondary" href="${{escapeHtml(job.external_url)}}" target="_blank" rel="noreferrer">원문</a>`);
-      }}
-      if (!links.length && job.url) {{
-        links.push(`<a class="button-link secondary" href="${{escapeHtml(job.url)}}" target="_blank" rel="noreferrer">열기</a>`);
-      }}
-      return `<div class="links">${{links.join("")}}</div>`;
-    }}
+    function detectedTs(job) {
+      if (!job.detected_at) return 0;
+      const ts = Date.parse(job.detected_at.replace(" ", "T") + "Z"); // SQLite CURRENT_TIMESTAMP = UTC
+      return Number.isNaN(ts) ? 0 : ts;
+    }
 
-    function words(value) {{
-      return value.trim().toLowerCase().split(/\\s+/).filter(Boolean);
-    }}
+    function deadlineDays(job) {
+      const raw = String(job.deadline || "").trim();
+      if (!raw) return null;
+      if (/상시|수시|채용\\s*시|충원\\s*시/.test(raw)) return null;
+      if (raw.includes("오늘마감")) return 0;
+      if (raw.includes("내일마감")) return 1;
+      let m = raw.match(/^D-(\\d+)/i);
+      if (m) return parseInt(m[1], 10);
+      m = raw.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
+      if (!m) m = raw.match(/(\\d{4})(\\d{2})(\\d{2})/);
+      if (m) return daysUntil(new Date(+m[1], +m[2] - 1, +m[3]));
+      m = raw.match(/(\\d{1,2})[./](\\d{1,2})/);
+      if (m) {
+        const now = new Date();
+        let d = new Date(now.getFullYear(), +m[1] - 1, +m[2]);
+        if ((now - d) / DAY > 60) d = new Date(now.getFullYear() + 1, +m[1] - 1, +m[2]);
+        return daysUntil(d);
+      }
+      return null;
+    }
 
-    function queryMatches(haystack, query, mode) {{
-      const terms = words(query);
-      if (!terms.length) return true;
-      return mode === "and"
-        ? terms.every((term) => haystack.includes(term))
-        : terms.some((term) => haystack.includes(term));
-    }}
+    function daysUntil(date) {
+      const today = new Date();
+      const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      return Math.round((date - start) / DAY);
+    }
 
-    function careerMatches(job, selected, mode) {{
-      if (!selected.length) return true;
-      const career = String(job.career_type || "");
-      const normalized = career.replace(/\\s+/g, "");
-      return mode === "and"
-        ? selected.every((item) => normalized.includes(item))
-        : selected.some((item) => normalized.includes(item));
-    }}
+    function isNew(job) { return NOW - detectedTs(job) < 2 * DAY; }
+    function isToday(job) { return NOW - detectedTs(job) < 1 * DAY; }
 
-    function compareJobs(a, b, field, dir) {{
-      const av = a[field] ?? "";
-      const bv = b[field] ?? "";
-      let result = 0;
-      if (field === "score") {{
-        result = Number(av || 0) - Number(bv || 0);
-      }} else {{
-        result = String(av).localeCompare(String(bv), "ko", {{ numeric: true, sensitivity: "base" }});
-      }}
-      return dir === "asc" ? result : -result;
-    }}
+    function tabMatch(job, tab) {
+      if (tab === "mech") return job.fit_level === "기계직";
+      if (tab === "review") return job.fit_level === "참고";
+      if (tab === "watch") return Boolean(job.watch_grade);
+      return true;
+    }
 
-    function render() {{
-      const q = document.getElementById("q").value.trim().toLowerCase();
-      const searchMode = document.getElementById("searchMode").value;
-      const source = document.getElementById("source").value;
-      const sector = document.getElementById("sector").value;
-      const fit = document.getElementById("fit").value;
-      const selectedCareers = careerChecks.filter((check) => check.checked).map((check) => check.value);
-      const careerMode = document.getElementById("careerMode").value;
-      const minScore = Number(document.getElementById("minScore").value || -999);
-      const sortField = document.getElementById("sortField").value;
-      const sortDir = document.getElementById("sortDir").value;
-      const rows = JOBS.filter((job) => {{
-        const haystack = [
-          job.company_name, job.title, job.deadline, job.career_type,
-          job.employment_type, job.location, job.field, job.source_label, job.sector_label,
-          job.fit_level, job.fit_reasons, job.matched_keywords, job.watch_label
-        ].join(" ").toLowerCase();
-        return queryMatches(haystack, q, searchMode)
-          && (!source || job.source_label.split("·").includes(source))
-          && (!sector || job.sector_label === sector)
-          && (!document.getElementById("watchGrade").value || job.watch_grade === document.getElementById("watchGrade").value)
-          && (!fit || job.fit_level === fit)
-          && careerMatches(job, selectedCareers, careerMode)
-          && (Number(job.score || 0) >= minScore);
-      }}).sort((a, b) => compareJobs(a, b, sortField, sortDir));
-      document.getElementById("visibleCount").textContent = rows.length;
-      body.innerHTML = rows.map((job) => `
-        <tr>
-          <td class="score">${{escapeHtml(job.score)}}</td>
-          <td>${{escapeHtml(job.source_label)}}</td>
-          <td><span class="fit ${{escapeHtml(job.fit_class)}}">${{escapeHtml(job.fit_level)}}</span></td>
-          <td><span class="sector">${{escapeHtml(job.sector_label)}}</span></td>
-          <td>${{job.watch_label ? `<span class="watch">${{escapeHtml(job.watch_label)}}</span>` : ""}}</td>
-          <td>${{escapeHtml(job.company_name || "회사명 미확인")}}</td>
-          <td>${{escapeHtml(job.title)}}</td>
-          <td>${{escapeHtml(job.deadline || "-")}}</td>
-          <td>${{escapeHtml(job.career_type || "-")}}</td>
-          <td>${{escapeHtml(job.employment_type || "-")}}</td>
-          <td>${{escapeHtml(job.location || "-")}}</td>
-          <td>${{escapeHtml(job.field || "-")}}</td>
-          <td>${{escapeHtml(job.fit_reasons)}}</td>
-          <td>${{linkHtml(job)}}</td>
-        </tr>
-      `).join("") || '<tr><td colspan="14" class="muted">조건에 맞는 공고가 없습니다.</td></tr>';
-    }}
+    function jobMatches(job) {
+      if (!tabMatch(job, state.tab)) return false;
+      if (state.source && !String(job.source_label).split("·").includes(state.source)) return false;
+      if (state.hideExpired) {
+        const days = deadlineDays(job);
+        if (days !== null && days < 0) return false;
+      }
+      if (state.q) {
+        const hay = (job.company_name + " " + job.title + " " + (job.field || "")).toLowerCase();
+        for (const token of state.q.toLowerCase().split(/\\s+/)) {
+          if (token && !hay.includes(token)) return false;
+        }
+      }
+      return true;
+    }
 
-    function resetFilters() {{
-      controls.forEach((control) => control.value = "");
-      document.getElementById("searchMode").value = "and";
-      document.getElementById("careerMode").value = "or";
-      document.getElementById("minScore").value = "-999";
-      document.getElementById("sortField").value = "detected_at";
-      document.getElementById("sortDir").value = "desc";
-      careerChecks.forEach((check) => check.checked = false);
+    function bestLink(job) {
+      return job.external_url || job.url || job.alio_detail_url || "";
+    }
+
+    function ddayChip(job) {
+      const days = deadlineDays(job);
+      if (days === null) {
+        const raw = String(job.deadline || "").trim();
+        return raw ? `<span class="chip ongoing">${escapeHtml(raw)}</span>` : "";
+      }
+      if (days < 0) return `<span class="chip ongoing">마감</span>`;
+      const label = days === 0 ? "오늘 마감" : `D-${days}`;
+      const cls = days <= 3 ? "dday" : (days <= 10 ? "dday-soon" : "ongoing");
+      return `<span class="chip ${cls}">${label}</span>`;
+    }
+
+    function postingHtml(job) {
+      const link = bestLink(job);
+      const title = link
+        ? `<a href="${escapeHtml(link)}" target="_blank" rel="noreferrer">${escapeHtml(job.title)}</a>`
+        : escapeHtml(job.title);
+      const chips = [
+        isNew(job) ? '<span class="chip new">NEW</span>' : "",
+        ddayChip(job),
+        job.career_type ? `<span class="chip career">${escapeHtml(job.career_type)}</span>` : "",
+        `<span class="chip source">${escapeHtml(job.source_label)}</span>`,
+      ].filter(Boolean).join(" ");
+      const sub = [job.location, job.field].filter(Boolean).join(" · ");
+      return `<div class="posting">
+        <span class="title">${title}</span>
+        ${sub ? `<span class="sub">${escapeHtml(sub)}</span>` : ""}
+        <span class="chips">${chips}</span>
+      </div>`;
+    }
+
+    function render() {
+      const rows = JOBS.filter(jobMatches);
+
+      document.getElementById("statMech").textContent = JOBS.filter(j => j.fit_level === "기계직").length;
+      document.getElementById("statNew").textContent = JOBS.filter(isToday).length;
+      document.getElementById("statClosing").textContent = JOBS.filter(j => {
+        const d = deadlineDays(j);
+        return j.fit_level === "기계직" && d !== null && d >= 0 && d <= 7;
+      }).length;
+      document.getElementById("statTotal").textContent = JOBS.length;
+      document.getElementById("cntMech").textContent = JOBS.filter(j => tabMatch(j, "mech")).length;
+      document.getElementById("cntReview").textContent = JOBS.filter(j => tabMatch(j, "review")).length;
+      document.getElementById("cntWatch").textContent = JOBS.filter(j => tabMatch(j, "watch")).length;
+      document.getElementById("cntAll").textContent = JOBS.length;
+
+      const groups = new Map();
+      for (const job of rows) {
+        const key = job.company_name || "회사명 미확인";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(job);
+      }
+      let entries = [...groups.entries()];
+      const groupNewest = list => Math.max(...list.map(detectedTs));
+      const groupDeadline = list => {
+        const days = list.map(deadlineDays).filter(d => d !== null && d >= 0);
+        return days.length ? Math.min(...days) : 9999;
+      };
+      if (state.sort === "deadline") {
+        entries.sort((a, b) => groupDeadline(a[1]) - groupDeadline(b[1]));
+      } else {
+        entries.sort((a, b) => groupNewest(b[1]) - groupNewest(a[1]));
+      }
+      for (const [, list] of entries) {
+        list.sort((a, b) => {
+          const da = deadlineDays(a), db = deadlineDays(b);
+          return (da === null ? 9999 : da) - (db === null ? 9999 : db);
+        });
+      }
+
+      const visible = entries.slice(0, state.visibleGroups);
+      const container = document.getElementById("groups");
+      if (!rows.length) {
+        container.innerHTML = '<div class="empty">조건에 맞는 공고가 없습니다.</div>';
+      } else {
+        container.innerHTML = visible.map(([company, list]) => {
+          const watch = list.find(j => j.watch_label);
+          const watchChip = watch ? `<span class="chip watch">관심 ${escapeHtml(watch.watch_grade)}</span>` : "";
+          const hasNew = list.some(isNew) ? '<span class="chip new">NEW</span>' : "";
+          const near = ddayChipForGroup(list);
+          if (list.length === 1) {
+            return `<details class="company-group single" open>
+              <summary></summary>
+              <div class="postings">
+                <div class="posting">
+                  <span class="title"><strong>${escapeHtml(company)}</strong> — ${titleLink(list[0])}</span>
+                  <span class="chips">${postingChips(list[0])} ${watchChip}</span>
+                </div>
+              </div>
+            </details>`;
+          }
+          return `<details class="company-group">
+            <summary>
+              <span class="company-name">${escapeHtml(company)}</span>
+              <span class="job-count">${list.length}건</span>
+              ${watchChip} ${hasNew} ${near}
+            </summary>
+            <div class="postings">${list.map(postingHtml).join("")}</div>
+          </details>`;
+        }).join("");
+      }
+      document.getElementById("moreBar").hidden = entries.length <= state.visibleGroups;
+      document.getElementById("moreBar").textContent = `더 보기 (${entries.length - state.visibleGroups}개 회사 남음)`;
+    }
+
+    function titleLink(job) {
+      const link = bestLink(job);
+      return link
+        ? `<a href="${escapeHtml(link)}" target="_blank" rel="noreferrer">${escapeHtml(job.title)}</a>`
+        : escapeHtml(job.title);
+    }
+
+    function postingChips(job) {
+      return [
+        isNew(job) ? '<span class="chip new">NEW</span>' : "",
+        ddayChip(job),
+        job.career_type ? `<span class="chip career">${escapeHtml(job.career_type)}</span>` : "",
+        `<span class="chip source">${escapeHtml(job.source_label)}</span>`,
+      ].filter(Boolean).join(" ");
+    }
+
+    function ddayChipForGroup(list) {
+      const days = list.map(deadlineDays).filter(d => d !== null && d >= 0);
+      if (!days.length) return "";
+      const min = Math.min(...days);
+      if (min > 10) return "";
+      const cls = min <= 3 ? "dday" : "dday-soon";
+      return `<span class="chip ${cls}">${min === 0 ? "오늘 마감" : `D-${min}`}</span>`;
+    }
+
+    function showMore() {
+      state.visibleGroups += GROUP_PAGE;
       render();
-    }}
+    }
 
-    async function runCrawl() {{
-      if (!confirm("지금 전체 수집을 실행할까요?")) return;
-      const response = await fetch("/run-crawl", {{ method: "POST" }});
-      const result = await response.json();
-      alert(result.message || "수집 요청 완료");
-      location.reload();
-    }}
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+    }
 
-    controls.forEach((control) => control.addEventListener("input", render));
-    careerChecks.forEach((control) => control.addEventListener("change", render));
+    async function runCrawl(button) {
+      button.disabled = true;
+      button.textContent = "수집 중...";
+      try {
+        const res = await fetch("/run-crawl", { method: "POST" });
+        await res.json();
+        location.reload();
+      } catch (err) {
+        button.textContent = "실패 — 다시 시도";
+        button.disabled = false;
+      }
+    }
+
+    document.getElementById("tabs").addEventListener("click", (event) => {
+      const tab = event.target.closest(".tab");
+      if (!tab) return;
+      state.tab = tab.dataset.tab;
+      state.visibleGroups = GROUP_PAGE;
+      document.querySelectorAll(".tab").forEach(el => el.classList.toggle("active", el === tab));
+      render();
+    });
+    document.getElementById("q").addEventListener("input", (event) => {
+      state.q = event.target.value.trim();
+      state.visibleGroups = GROUP_PAGE;
+      render();
+    });
+    document.getElementById("source").addEventListener("change", (event) => {
+      state.source = event.target.value;
+      state.visibleGroups = GROUP_PAGE;
+      render();
+    });
+    document.getElementById("sort").addEventListener("change", (event) => {
+      state.sort = event.target.value;
+      render();
+    });
+    document.getElementById("hideExpired").addEventListener("change", (event) => {
+      state.hideExpired = event.target.checked;
+      render();
+    });
+
     render();
   </script>
 </body>
@@ -623,7 +666,6 @@ def serialize_job(row: dict[str, Any]) -> dict[str, Any]:
         "sector_label": classify_sector(row),
         "watch_grade": watch_grade,
         "watch_label": f"{watch_grade} {watch_name}".strip(),
-        "watch_industry": watch.get("industry", ""),
         "company_name": row.get("company_name") or "",
         "title": row.get("title") or "",
         "deadline": row.get("deadline") or "",
@@ -631,7 +673,6 @@ def serialize_job(row: dict[str, Any]) -> dict[str, Any]:
         "employment_type": row.get("employment_type") or "",
         "location": row.get("location") or "",
         "field": row.get("field") or "",
-        "matched_keywords": row.get("matched_keywords") or "",
         "detected_at": row.get("detected_at") or "",
         "url": row.get("url") or "",
         "alio_detail_url": row.get("alio_detail_url") or "",
@@ -640,19 +681,7 @@ def serialize_job(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def watch_info(row: dict[str, Any]) -> dict[str, str]:
-    raw_data = row.get("raw_data")
-    if not raw_data:
-        return {}
-    if isinstance(raw_data, str):
-        try:
-            parsed = json.loads(raw_data)
-        except json.JSONDecodeError:
-            return {}
-    elif isinstance(raw_data, dict):
-        parsed = raw_data
-    else:
-        return {}
-    watch = parsed.get("companyWatchlist")
+    watch = raw_data_of(row).get("companyWatchlist")
     if not isinstance(watch, dict):
         return {}
     return {str(key): str(value or "") for key, value in watch.items()}
@@ -675,117 +704,186 @@ def render_source_row(row: dict[str, Any]) -> str:
 </tr>"""
 
 
+# 기계직 확정 단어 — 직무를 직접 가리키는 단어만 넣는다 (제목/모집분야에서만 찾음)
+MECH_STRONG_TERMS = (
+    "기계",
+    "기구설계",
+    "기구개발",
+    "설비",
+    "보전",
+    "정비",
+    "유지보수",
+    "공무",
+    "생산기술",
+    "공정기술",
+    "제조기술",
+    "플랜트",
+    "금형",
+    "용접",
+    "배관",
+    "공조",
+    "냉동",
+    "보일러",
+    "사출",
+    "절삭",
+    "선반",
+    "밀링",
+    "프레스",
+    "cnc",
+    "mct",
+    "치공구",
+    "발전설비",
+    "유틸리티",
+    "utility",
+    "maintenance",
+    "자동화설비",
+    "로봇",
+    "철도차량",
+    "중장비",
+    "건설기계",
+)
+
+# 참고 단어 — 기계직일 수도 있는 넓은 직무 단어
+MECH_BROAD_TERMS = (
+    "생산",
+    "제조",
+    "공정",
+    "품질",
+    "안전관리",
+    "시설관리",
+    "장비",
+    "설계",
+    "엔지니어",
+    "기술직",
+    "연구개발",
+    "r&d",
+    "cad",
+    "도면",
+)
+
+# 무관 확정 단어 — 이 단어가 있고 기계직 단어가 없으면 무관 처리
+MECH_REJECT_TERMS = (
+    "마케팅",
+    "영업",
+    "회계",
+    "세무",
+    "재무",
+    "인사",
+    "노무",
+    "총무",
+    "경리",
+    "사무직",
+    "행정",
+    "비서",
+    "소프트웨어",
+    "프론트엔드",
+    "백엔드",
+    "앱개발",
+    "웹개발",
+    "데이터분석",
+    "디자이너",
+    "디자인",
+    "브랜드",
+    "콘텐츠",
+    "에디터",
+    "카피라이터",
+    "교사",
+    "강사",
+    "교육",
+    "상담",
+    "간호",
+    "요양",
+    "약사",
+    "임상",
+    "조리",
+    "주방",
+    "서빙",
+    "미용",
+    "판매",
+    "매장",
+    "캐셔",
+    "텔레마케팅",
+    "고객센터",
+    "배송",
+    "택배",
+    "운전원",
+    "경비",
+    "미화",
+    "보험",
+    "금융",
+    "은행",
+    "호텔",
+    "물류관리",
+    "마케터",
+    "세일즈",
+    "sales",
+    "바리스타",
+    "영양사",
+    "급식",
+    "조무사",
+    "사서",
+    "통역",
+    "번역",
+    "인플루언서",
+    "쇼호스트",
+    "회계사",
+    "변호사",
+    "법무",
+)
+
+# 기계 카테고리 목록에서 왔을 때 기계직으로 승격해도 안전한 넓은 단어
+# ("엔지니어", "품질" 등은 AI 엔지니어/식품 품질처럼 오탐이 많아 제외)
+MECH_PROMOTABLE_BROAD_TERMS = ("생산", "제조", "공정", "장비", "설계", "기술직")
+
+MECHANICAL_LIST_CATEGORIES = ("기계 직무 목록",)
+RELATED_LIST_CATEGORIES = ("생산 직무 목록", "연구 직무 목록")
+
+FIT_MECH = "기계직"
+FIT_REVIEW = "참고"
+FIT_NONE = "무관"
+
+
 def classify_mechanical_fit(row: dict[str, Any]) -> dict[str, Any]:
+    """제목·모집분야 텍스트와 수집 목록 카테고리로 기계직 여부를 3단계로 나눈다.
+
+    회사명은 오탐이 많아 매칭에서 제외한다 (예: "동양기계공업"의 사무직 공고).
+    """
     text = " ".join(
-        str(row.get(key) or "")
-        for key in (
-            "company_name",
-            "title",
-            "field",
-            "employment_type",
-            "career_type",
-            "location",
-            "matched_keywords",
-        )
+        str(row.get(key) or "") for key in ("title", "field")
     ).lower()
-    score = int(row.get("score") or 0)
-    strong_terms = (
-        "기계",
-        "기계직",
-        "기계설비",
-        "설비",
-        "설비보전",
-        "보전",
-        "정비",
-        "유지보수",
-        "공장공무",
-        "시설공무",
-        "설비공무",
-        "공무팀",
-        "생산기술",
-        "공정기술",
-        "설비기술",
-        "제조기술",
-        "제조",
-        "기술직",
-        "플랜트",
-        "철도차량",
-        "자동차",
-        "모빌리티",
-        "반도체",
-        "방산",
-        "화약",
-        "발전설비",
-        "유틸리티",
-        "utility",
-        "maintenance",
-        "공조",
-        "냉동",
-        "보일러",
-    )
-    review_terms = (
-        "품질",
-        "품질관리",
-        "안전",
-        "안전관리",
-        "환경",
-        "에너지",
-        "연구직",
-        "연구원",
-        "연구개발",
-        "기술개발",
-        "제품개발",
-        "r&d",
-        "cad",
-        "도면",
-        "장비",
-        "시설",
-    )
-    reject_terms = (
-        "마케팅",
-        "영업",
-        "회계",
-        "재무",
-        "인사",
-        "전산",
-        "소프트웨어",
-        "sw",
-        "디자이너",
-        "브랜드",
-        "md",
-        "교사",
-        "강사",
-        "상담",
-        "간호",
-        "요양",
-        "조리",
-    )
-    strong_hits = [term for term in strong_terms if term in text]
-    review_hits = [term for term in review_terms if term in text]
-    reject_hits = [term for term in reject_terms if term in text]
-    if strong_hits and score >= 8:
-        return {
-            "level": "기계 추천",
-            "class": "fit-strong",
-            "reasons": strong_hits[:5],
-        }
-    if strong_hits or review_hits:
-        return {
-            "level": "검토 필요",
-            "class": "fit-review",
-            "reasons": (strong_hits + review_hits)[:5],
-        }
+    category = str(raw_data_of(row).get("listCategory") or "")
+
+    # "공무원"/"공무직"의 "공무"는 설비공무가 아니므로 매칭 대상에서 제거
+    strong_text = text.replace("공무원", "").replace("공무직", "")
+    strong_hits = [term for term in MECH_STRONG_TERMS if term in strong_text]
+    broad_hits = [term for term in MECH_BROAD_TERMS if term in text]
+    reject_hits = [term for term in MECH_REJECT_TERMS if term in text]
+
+    if strong_hits:
+        return {"level": FIT_MECH, "class": "fit-strong", "reasons": strong_hits[:5]}
     if reject_hits:
-        return {
-            "level": "비추천",
-            "class": "fit-reject",
-            "reasons": reject_hits[:5],
-        }
-    return {
-        "level": "낮은 관련",
-        "class": "fit-low",
-        "reasons": [],
-    }
+        return {"level": FIT_NONE, "class": "fit-low", "reasons": reject_hits[:3]}
+    if broad_hits:
+        promotable = [term for term in broad_hits if term in MECH_PROMOTABLE_BROAD_TERMS]
+        if promotable and category in MECHANICAL_LIST_CATEGORIES:
+            return {"level": FIT_MECH, "class": "fit-strong", "reasons": promotable[:5] + [category]}
+        return {"level": FIT_REVIEW, "class": "fit-review", "reasons": broad_hits[:5]}
+    if category in MECHANICAL_LIST_CATEGORIES + RELATED_LIST_CATEGORIES:
+        return {"level": FIT_REVIEW, "class": "fit-review", "reasons": [category]}
+    return {"level": FIT_NONE, "class": "fit-low", "reasons": []}
+
+
+def raw_data_of(row: dict[str, Any]) -> dict[str, Any]:
+    raw = row.get("raw_data")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def classify_sector(row: dict[str, Any]) -> str:
@@ -799,10 +897,8 @@ def classify_sector(row: dict[str, Any]) -> str:
         "공사",
         "공단",
         "공공",
-        "공단",
         "재단",
         "진흥원",
-        "공단",
         "정부",
         "시청",
         "군청",

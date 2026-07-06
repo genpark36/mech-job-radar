@@ -22,6 +22,7 @@ from .scoring import score_job
 from .worknet_client import fetch_worknet_jobs
 
 
+# 잡코리아 기계·설비 계열 직무 카테고리 목록 페이지
 DEFAULT_JOBKOREA_URLS = [
     "https://www.jobkorea.co.kr/recruit/joblist?menucode=duty&duty=1000327",
     "https://www.jobkorea.co.kr/recruit/joblist?menucode=duty&duty=1000329",
@@ -30,9 +31,43 @@ DEFAULT_JOBKOREA_URLS = [
     "https://www.jobkorea.co.kr/recruit/joblist?menucode=duty&duty=10041",
 ]
 
+# 사람인 직종 중분류: 11=생산(기계·설비 포함), 9=연구·R&D
 DEFAULT_SARAMIN_URLS = [
-    "https://www.saramin.co.kr/zf_user/jobs/list/job-category",
+    "https://www.saramin.co.kr/zf_user/jobs/list/job-category?cat_mcls=11",
+    "https://www.saramin.co.kr/zf_user/jobs/list/job-category?cat_mcls=9",
 ]
+
+# 목록 페이지가 어떤 직무 카테고리인지 — 분류(기계직/참고/무관)의 소스 신호로 사용
+LIST_CATEGORIES = {
+    "jobkorea": {
+        "duty=1000327": "기계 직무 목록",
+        "duty=1000329": "기계 직무 목록",
+        "duty=1000330": "기계 직무 목록",
+        "duty=1000332": "기계 직무 목록",
+        "duty=10041": "기계 직무 목록",
+    },
+    "saramin": {
+        "cat_mcls=11": "생산 직무 목록",
+        "cat_mcls=9": "연구 직무 목록",
+    },
+}
+
+
+def list_category_for(platform: str, url: str) -> str:
+    for token, label in LIST_CATEGORIES.get(platform, {}).items():
+        if token in url:
+            return label
+    return ""
+
+
+def tag_list_category(jobs: list[dict[str, Any]], platform: str, url: str) -> None:
+    category = list_category_for(platform, url)
+    if not category:
+        return
+    for job in jobs:
+        raw = job.setdefault("raw_data", {})
+        if isinstance(raw, dict):
+            raw["listCategory"] = category
 
 
 @dataclass
@@ -243,6 +278,7 @@ def run_platform(
         source_id = ensure_source(conn, url=url, platform=platform, source_type="platform")
         try:
             fetch = fetch_platform_jobs(platform=platform, url=url, max_items=max_items)
+            tag_list_category(fetch.jobs, platform, url)
             jobs = score_jobs(fetch.jobs, rules, watchlist)
             candidates = [job for job in jobs if int(job.get("score", 0)) >= min_score]
             inserted = insert_jobs(conn, candidates, source_id)

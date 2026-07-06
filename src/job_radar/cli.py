@@ -21,6 +21,7 @@ from .crawler import (
     DEFAULT_SARAMIN_URLS,
     expand_platform_urls,
     run_all_crawlers,
+    tag_list_category,
 )
 from .dashboard import write_dashboard
 from .db import (
@@ -471,6 +472,7 @@ def fetch_platform(args: argparse.Namespace) -> int:
                     url=url,
                     max_items=args.max_items,
                 )
+                tag_list_category(result.jobs, args.platform, url)
                 jobs = score_existing_jobs(result.jobs, rules)
                 candidates = [
                     job for job in jobs if int(job.get("score", 0)) >= int(args.min_score)
