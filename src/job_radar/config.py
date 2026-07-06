@@ -17,6 +17,7 @@ class Settings:
     alio_default_params: dict[str, str]
     alio_public_url: str
     alio_public_default_params: dict[str, str]
+    alio_public_enabled: bool
     worknet_api_url: str
     worknet_api_key: str
     worknet_enabled: bool
@@ -72,6 +73,8 @@ def load_settings() -> Settings:
             "https://opendata.alio.go.kr/new/odaApiMng/recrutInquiryAjaxList.do",
         ).strip(),
         alio_public_default_params={str(k): str(v) for k, v in public_params.items()},
+        alio_public_enabled=os.getenv("ALIO_PUBLIC_ENABLED", "1").strip().lower()
+        in {"1", "true", "yes", "y"},
         worknet_api_url=os.getenv(
             "WORKNET_API_URL",
             "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo210L01.do",

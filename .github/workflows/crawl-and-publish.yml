@@ -2,6 +2,8 @@ name: Crawl and publish
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
   schedule:
     # UTC 21/03/09/15 = KST 06/12/18/24
     - cron: "0 3,9,15,21 * * *"
@@ -58,6 +60,8 @@ jobs:
           add_env WORKNET_KEYWORDS "$WORKNET_KEYWORDS"
           add_env WORKNET_OCCUPATIONS "$WORKNET_OCCUPATIONS"
           add_env MECH_JOB_RADAR_DB "data/job_radar.sqlite3"
+          # ALIO API는 해외 IP를 차단하므로 CI에서는 끄고 로컬 스냅샷을 대신 사용
+          add_env ALIO_PUBLIC_ENABLED "0"
 
       - name: Restore crawl database
         uses: actions/cache/restore@v4
@@ -76,6 +80,7 @@ jobs:
         run: |
           mkdir -p data
           python -m job_radar init-db
+          python -m job_radar import-alio-snapshot data/alio_snapshot.json
           python -m job_radar fetch-all --platform-max-items 1000 --platform-max-pages 5 --worknet-max-pages 20 || true
 
       - name: Save crawl database

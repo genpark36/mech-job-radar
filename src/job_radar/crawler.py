@@ -209,7 +209,7 @@ def run_alio_public(
     result: CrawlRunResult,
     watchlist: CompanyWatchlist,
 ) -> CrawlRunResult:
-    if not settings.alio_public_url:
+    if not settings.alio_public_enabled or not settings.alio_public_url:
         return result
     for params in expand_alio_public_params(settings.alio_public_default_params):
         ncs_code = params.get("ncsCdLst", "")

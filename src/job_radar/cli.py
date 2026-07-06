@@ -46,6 +46,7 @@ from .notifier import build_message, send_telegram
 from .platform_client import RobotsBlockedError, fetch_platform_jobs
 from .scoring import score_job
 from .server import run_server
+from .snapshot import DEFAULT_SNAPSHOT_PATH, export_alio_snapshot, import_alio_snapshot
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -204,6 +205,24 @@ def main(argv: list[str] | None = None) -> int:
     sample_parser.add_argument("--dry-run", action="store_true")
     sample_parser.add_argument("--limit", type=int, default=5)
 
+    export_snapshot_parser = subparsers.add_parser(
+        "export-alio-snapshot",
+        help="Write ALIO rows from the DB to a committable JSON snapshot.",
+    )
+    export_snapshot_parser.add_argument("--output", default=str(DEFAULT_SNAPSHOT_PATH))
+
+    import_snapshot_parser = subparsers.add_parser(
+        "import-alio-snapshot",
+        help="Load an ALIO JSON snapshot into the DB (used by CI where ALIO is unreachable).",
+    )
+    import_snapshot_parser.add_argument("path", nargs="?", default=str(DEFAULT_SNAPSHOT_PATH))
+
+    publish_parser = subparsers.add_parser(
+        "publish",
+        help="Fetch everything locally, refresh the ALIO snapshot, then commit & push it.",
+    )
+    publish_parser.add_argument("--no-push", action="store_true", help="Skip git commit/push.")
+
     cleanup_parser = subparsers.add_parser(
         "cleanup-jobs",
         help="Delete rows with UI-button titles or platform fallback company names.",
@@ -271,6 +290,12 @@ def main(argv: list[str] | None = None) -> int:
         return fetch_all(args)
     if args.command == "import-sample":
         return import_sample(args)
+    if args.command == "export-alio-snapshot":
+        return export_alio_snapshot_command(args)
+    if args.command == "import-alio-snapshot":
+        return import_alio_snapshot_command(args)
+    if args.command == "publish":
+        return publish_command(args)
     if args.command == "cleanup-jobs":
         return cleanup_jobs_command(args)
     if args.command == "list-jobs":
@@ -530,6 +555,79 @@ def fetch_platform(args: argparse.Namespace) -> int:
     if not args.dry_run:
         print(f"Total inserted: {total_inserted}")
     return 1 if had_error and total_fetched == 0 else 0
+
+
+def export_alio_snapshot_command(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    with connect(settings.db_path) as conn:
+        init_db(conn)
+        count = export_alio_snapshot(conn, args.output)
+    print(f"ALIO 스냅샷 저장: {args.output} ({count}건)")
+    return 0
+
+
+def import_alio_snapshot_command(args: argparse.Namespace) -> int:
+    path = Path(args.path)
+    if not path.exists():
+        print(f"스냅샷 파일이 없어 건너뜁니다: {path}")
+        return 0
+    settings = load_settings()
+    with connect(settings.db_path) as conn:
+        init_db(conn)
+        result = import_alio_snapshot(conn, path)
+    print(
+        f"ALIO 스냅샷 불러옴: {result['total']}건 중 신규 {result['inserted']}건"
+        + (f" (기준 {result['exported_at']})" if result["exported_at"] else "")
+    )
+    return 0
+
+
+def publish_command(args: argparse.Namespace) -> int:
+    import subprocess
+
+    settings = load_settings()
+    rules = load_keywords()
+    print("1/4 전체 수집 중...")
+    with connect(settings.db_path) as conn:
+        init_db(conn)
+        result = run_all_crawlers(conn, settings=settings, rules=rules)
+        print(f"    수집 {result.fetched}건, 신규 {result.inserted}건")
+        if result.errors:
+            for error in result.errors:
+                print(f"    경고: {error}")
+        print("2/4 오염 데이터 정리...")
+        counts = cleanup_jobs(conn, apply=True)
+        removed = counts["bad_title"] + counts["fallback_company"]
+        print(f"    정리 {removed}건")
+        print("3/4 ALIO 스냅샷 갱신...")
+        snapshot_count = export_alio_snapshot(conn, DEFAULT_SNAPSHOT_PATH)
+        print(f"    {DEFAULT_SNAPSHOT_PATH} ({snapshot_count}건)")
+    if args.no_push:
+        print("4/4 --no-push 지정으로 git 단계는 건너뜁니다.")
+        return 0
+    print("4/4 커밋 & 푸시...")
+    diff = subprocess.run(
+        ["git", "diff", "--quiet", "--", DEFAULT_SNAPSHOT_PATH.as_posix()],
+        capture_output=True,
+    )
+    untracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", DEFAULT_SNAPSHOT_PATH.as_posix()],
+        capture_output=True,
+    )
+    if diff.returncode == 0 and untracked.returncode == 0:
+        print("    스냅샷 변경 없음 — 푸시 생략.")
+        return 0
+    for command in (
+        ["git", "add", DEFAULT_SNAPSHOT_PATH.as_posix()],
+        ["git", "commit", "-m", f"ALIO 스냅샷 갱신 ({snapshot_count}건)"],
+        ["git", "push"],
+    ):
+        proc = subprocess.run(command, capture_output=True, text=True)
+        if proc.returncode != 0:
+            print(f"    실패: {' '.join(command)}\n{proc.stderr.strip()}", file=sys.stderr)
+            return 1
+    print("    푸시 완료 — GitHub Actions가 웹 대시보드를 갱신합니다.")
+    return 0
 
 
 def cleanup_jobs_command(args: argparse.Namespace) -> int:
